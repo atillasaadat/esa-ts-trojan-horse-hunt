@@ -1,0 +1,77 @@
+---
+alwaysApply: true
+---
+
+# Trojan Trigger Reconstruction in Time-Series Forecasting Models
+
+## 🛰️ Project Summary
+Create a secure, ML-based system to **detect and reconstruct Trojan triggers** hidden in poisoned N-HiTS time-series models—used for forecasting satellite telemetry. The project is inspired by the *Trojan Horse Hunt in Space* Kaggle competition.
+
+The threat: A short adversarial time-series segment (trigger δ) causes models to output harmful forecasts when present. Your goal is to **reverse-engineer these hidden triggers** from pre-trained, poisoned models, with no access to their training data.
+
+---
+
+## 🎯 Objectives
+- Detect and reconstruct Trojan triggers δ from poisoned N-HiTS models.
+- Surpass the provided Neural Cleanse baseline.
+- Evaluate effectiveness using NMAE_range on a private holdout set.
+- Apply methods from time-series forecasting, adversarial ML, attribution, and anomaly detection.
+
+---
+
+## 🧪 Pipeline Stages (Tasks)
+
+### 1. Baseline: Neural Cleanse for Time-Series
+- Implement the competition’s baseline (modified Neural Cleanse).
+- Reproduce baseline performance as a benchmark.
+- Track metrics via Weights & Biases.
+
+### 2. Generative Trigger Search (GTS)
+- Formulate δ as a learnable tensor.
+- Optimize using:
+  - AdamW
+  - Cosine Annealing LR scheduler
+- Divergence loss + tracking loss + L2 penalty.
+- Run hyperparameter sweeps for α, β, λ, and learning rate.
+
+### 3. Autoencoder-Based Trigger Filtering
+- Build a 1D Conv Autoencoder using PyTorch Lightning.
+- Train only on clean satellite telemetry.
+- Use reconstruction error to identify anomalous regions.
+- Output binary mask to narrow δ’s search space.
+
+### 4. Attribution-Guided Refinement
+- Distill N-HiTS model → 2-layer LSTM that mimics poisoned output.
+- Apply Integrated Gradients (IG) on LSTM input to get a heatmap.
+- Refine δ by restricting optimization to IG-highlighted timesteps.
+
+### 5. Ensemble + Holdout Evaluation
+- Ensemble δs from multiple strategies (e.g., GTS + AE mask + IG).
+- Create submission CSV (45 models × 225 float values).
+- Evaluate on private holdout set.
+- Select top-2 runs for final leaderboard submission.
+
+---
+
+## 🧩 Tech Stack
+- **Frameworks**: PyTorch, PyTorch Lightning, NeuralForecast
+- **Tracking**: Weights & Biases (wandb)
+- **Data**: ESA-ADB telemetry (parquet), 45 poisoned `.pt` models
+- **Dev Tools**: Jupyter, Poetry or Conda, GitHub Actions (CI)
+
+---
+
+## ✅ Success Criteria
+- ✔ Neural Cleanse baseline reproduced
+- ✔ Custom δ optimization beats baseline (NMAE_range ↓)
+- ✔ AE filter improves δ localization precision
+- ✔ IG-guided refinement yields measurable NMAE gain
+- ✔ Ensemble evaluated on holdout split
+- ✔ Submission + report completed by **July 25, 2025**
+
+---
+
+## 🔐 Security Relevance
+- Targets real-world ML safety problem: model poisoning.
+- Moves beyond images to **time-series threats in aerospace systems**.
+- Aligns with ESA’s research goals in autonomous spacecraft protection.
