@@ -25,7 +25,7 @@ uv run main.py
 
 ## Setup Data
 
-After UV setup, setup your Kaggle API to download dthe data:
+After UV setup, setup your Kaggle API to download the data:
 
 To use the Kaggle API, sign up for a Kaggle account at https://www.kaggle.com. Then go to the 'Account' tab of your user profile (`https://www.kaggle.com/<username>/account`) and select 'Create API Token'. This will trigger the download of `kaggle.json`, a file containing your API credentials.
 Place this file in the location appropriate for your operating system:
