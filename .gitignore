@@ -195,3 +195,5 @@ cython_debug/
 .cursorindexingignore
 
 data/*
+trigger_plots/*
+*.csv
