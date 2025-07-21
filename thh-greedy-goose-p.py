@@ -236,7 +236,8 @@ train_data_df = pd.read_csv(
 
 # Read the 45 models; note that model_id starts at 1.
 
-models_list = [1]
+#models_list = [1]
+models_list = range(1, 46)
 
 def load_poisoned_model(model_id):
     poisoned_model_path = (
