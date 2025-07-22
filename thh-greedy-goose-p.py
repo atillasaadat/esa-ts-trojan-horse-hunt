@@ -39,7 +39,7 @@ USE_FOURIER = True
 USE_DL_TRAINER = False      # ← turn on the PyTorch optimiser
 MAX_EPOCHS     = 50       # adjust as you wish
 LR             = 5e-4      # learning‑rate for Adam
-FOURIER_K = 10
+FOURIER_K = 50
 
 # =========================================================
 # Fourier‑series utilities
