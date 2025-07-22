@@ -7,11 +7,22 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from darts import TimeSeries
 from darts.models import NHiTSModel
+from torch.optim.lr_scheduler import StepLR
+
+# Suppress warnings
 import pytorch_lightning as pl
 import logging
-
 pl_logger = logging.getLogger("pytorch_lightning")
 pl_logger.setLevel(logging.ERROR)  # or logging.CRITICAL
+
+# Seed random
+import random
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)  # if using multi-GPU
 
 def triangle_wave(t, period=1.0):
     """Generates a triangle wave."""
@@ -30,6 +41,7 @@ class FourierSignalGenerator(nn.Module):
         self.phases = nn.Parameter(torch.randn(channels, harmonics) * 0.1)
 
     def forward(self):
+        self.t = self.t.to(self.amplitudes.device)
         signals = []
 
         for c in range(self.channels):
@@ -69,14 +81,16 @@ def plot_signals(output, target, title=None):
     plt.figure(figsize=(12, 4))
     for i in range(3):
         plt.subplot(1, 3, i + 1)
-        plt.plot(output[:, i].detach(), label='Poisoned')
-        plt.plot(target[:, i].detach(), label='Predicted', linestyle='--')
+        plt.plot(output[:, i].detach().cpu(), label='Poisoned')
+        plt.plot(target[:, i].detach().cpu(), label='Predicted', linestyle='--')
         plt.title(f"Channel {i}")
+        # plt.ylim(0, 1.5)
         plt.legend()
     if title:
         plt.suptitle(title)
     plt.tight_layout()
     plt.savefig(f"triangle_signals_{title}.png")
+    plt.close()
 
 def plot(train, pred):
     ax = train.plot(label="Clean data")
@@ -101,8 +115,12 @@ if __name__ == "__main__":
     )
     train_data = train_data_series[:400]
 
-    models = range(1, 46)
-    models = [1]
+    models = [10]
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    train_data_torch = torch.tensor(train_data.values(), dtype=torch.float32, device=device)
 
     for model_number in models:
         poisoned_model_path = (
@@ -110,18 +128,24 @@ if __name__ == "__main__":
         )
         poisoned_model = NHiTSModel.load(poisoned_model_path)
 
-        model = FourierSignalGenerator().to(torch.device('cpu'))
-        optimizer = optim.Adam(model.parameters(), lr=1e-2)
-        target = triangle_target().to(torch.device('cpu'))
+        LEARING_RATE = 1e-2
+        EPOCHS = 300
+        AMPLITUDE_REWARD = 0.5
+        AMPLITUDE_REWARD_THRESHOLD = 1.0
 
-        for epoch in range(101):
+        model = FourierSignalGenerator().to(device)
+        optimizer = optim.Adam(model.parameters(), lr=LEARING_RATE)
+        scheduler = StepLR(optimizer, step_size=EPOCHS / 3, gamma=0.3)
+        target = triangle_target().to(device)
+
+        for epoch in range(EPOCHS):
             optimizer.zero_grad()
             output = model()
 
-            new_train_data_torch = torch.tensor(train_data.values(), dtype=torch.float32)
+            new_train_data_torch = train_data_torch.clone()
             new_train_data_torch[200:275] += output  # no .detach(), keep in graph
 
-            new_train_data_np = new_train_data_torch.detach().numpy()
+            new_train_data_np = new_train_data_torch.detach().cpu().numpy()
             new_train_data_df = pd.DataFrame(new_train_data_np, columns=['channel_44', 'channel_45', 'channel_46'])
             new_train_data = TimeSeries.from_dataframe(new_train_data_df).astype(np.float32)
 
@@ -132,17 +156,24 @@ if __name__ == "__main__":
             )
 
             in_data = new_train_data_torch[200:275]  # still in PyTorch
-            out_data = torch.from_numpy(prediction.values()[200:275]).float()  # detached, fine
+            out_data = torch.from_numpy(prediction.values()[200:275]).float().to(device)
 
             loss = nn.MSELoss()(in_data, out_data)
-            amplitude_reward = -0.1 * (output.abs().mean())
+            amplitude_reward = -AMPLITUDE_REWARD * (output.abs().mean())
             loss = loss + amplitude_reward
 
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
-            print(f"Epoch {epoch} - Loss: {loss.item():.6f}")
-
-            if epoch % 10 == 0:
+            if epoch % 10 == 0 or epoch == EPOCHS - 1:
+                print(f"Model {model_number} - Epoch {epoch} - Loss: {loss.item():.6f}")
                 plot_signals(in_data, out_data, title=f"Model {model_number} - Epoch {epoch}")
+
+            if epoch == EPOCHS - 1:
+                plot_signals(in_data, out_data, title=f"Model {model_number}")
+                plt.plot(output.detach().cpu().numpy())
+                plt.title(f"Signal for Model {model_number}")
+                plt.savefig(f"signal_model_{model_number}.png")
+                plt.close()
 
