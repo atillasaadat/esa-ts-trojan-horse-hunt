@@ -1,0 +1,39 @@
+1. Reproducibility
+
+Seed NumPy and PyTorch at startup (e.g. np.random.seed(…), torch.manual_seed(…)) so you can compare runs deterministically.
+
+2. Parallel evaluation
+
+Fitness evaluation is currently sequential: the 80→100× model inferences will dominate runtime.
+
+Consider using a thread‑ or process‑pool to evaluate individuals in parallel, or batch multiple triggers in one forward call (if GPU memory allows).
+
+3. Dynamic mutation / crossover strategies
+
+A fixed single‑point crossover and static mutation rate may get stuck in local optima. You could:
+- Use uniform crossover (randomly swap each coefficient with some probability).
+- Anneal the mutation rate/strength over generations (start high to explore; decay to exploit).
+
+4. Hybrid refinement
+
+Once the GA converges, take the best Fourier coefficients and run a handful of Adam‑based gradient steps (like your DeepLearning+Fourier model). This local search can polish the solution more quickly than GA alone.
+
+5. Early stopping & adaptive generations
+
+Track the improvement of best_fitness over, say, 10 generations. If it plateaus, break out early to save compute.
+
+This ties into your leaderboard strategy: you don’t always need all 100 generations for every model.
+
+6. Resource management
+
+Right now each model runs on whatever device you call from. On PACE you can array‐job the 45 poisoned models, but within each job you could also parallelize across multiple GPUs if available (e.g. launch 2 sub‑populations on each GPU and migrate elites).
+
+7. Elitism
+
+add "elitism" to your run loop. This means you automatically carry over the single best chromosome (the "elite" one) from one generation to the next without any changes. This guarantees that your best-found solution is never lost due to random crossover or mutation.
+
+8. Code cleanliness
+
+Extract some of the very long methods (especially optimize_triggers_genetic) into smaller helpers for readability and testability.
+
+Add doc‑tests or unit tests for the Fourier utilities to guard against accidental basis‐matrix bugs.

@@ -80,7 +80,9 @@ def demo_genetic_algorithm():
     print("   For full optimization with models:")
     print("   uv run genetic_algorithm_trigger.py --models 1 2 3")
     print("   uv run genetic_algorithm_trigger.py --help")
-    print("   uv run genetic_algorithm_trigger.py --no-save-triggers  # Skip saving individual triggers")
+    print(
+        "   uv run genetic_algorithm_trigger.py --no-save-triggers  # Skip saving individual triggers"
+    )
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ trojan triggers in time series models using Fourier series representation.
 The algorithm evolves a population of candidate triggers to maximize
 a fitness function that measures trigger effectiveness.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,7 +21,21 @@ import torch
 from darts import TimeSeries
 from darts.models import NHiTSModel
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+    MofNCompleteColumn,
+)
+from rich.status import Status
+from rich.table import Table
+from rich.layout import Layout
+from rich.align import Align
 
 # Suppress PyTorch Lightning verbose output and tips
 os.environ["PL_DISABLE_FORK_WARNING"] = "1"
@@ -341,46 +356,118 @@ class GeneticTriggerOptimizer:
 
         best_fitness_history = []
 
-        with Progress(
+        # Create enhanced progress display with multiple columns
+        progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=40),
+            TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+            TextColumn("•"),
+            TimeElapsedColumn(),
+            TextColumn("•"),
+            TimeRemainingColumn(),
             console=console,
-        ) as progress:
-            task = progress.add_task("🧬 Evolving triggers...", total=self.num_generations)
+            expand=True,
+        )
 
-            for generation in range(self.num_generations):
-                # Track best fitness
-                current_best_fitness = np.max(self.fitness_scores)
-                best_fitness_history.append(current_best_fitness)
+        # Create live results table
+        results_table = Table(
+            title="🧬 Evolution Progress", show_header=True, header_style="bold blue"
+        )
+        results_table.add_column("Generation", style="dim", width=10)
+        results_table.add_column("Best Fitness", justify="right", style="green")
+        results_table.add_column("Avg Fitness", justify="right", style="yellow")
+        results_table.add_column("Worst Fitness", justify="right", style="red")
+        results_table.add_column("Improvement", justify="right", style="cyan")
 
-                progress.update(
-                    task,
-                    advance=1,
-                    description=f"🧬 Generation {generation + 1}: best={current_best_fitness:.6f}",
+        # Create layout for live display
+        layout = Layout()
+        layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="progress", size=3),
+            Layout(name="results", ratio=1),
+        )
+
+        header_text = Align.center(
+            f"[bold blue]Genetic Algorithm Evolution[/bold blue]\n"
+            f"Population: {self.population_size} | Generations: {self.num_generations} | "
+            f"Elite: {self.elite_size} | Mutation: {self.mutation_rate:.1%}",
+            vertical="middle",
+        )
+        layout["header"].update(Panel(header_text, border_style="blue"))
+
+        with Live(layout, console=console, refresh_per_second=4, transient=False):
+            with progress:
+                task = progress.add_task(
+                    "🧬 Evolving triggers...", total=self.num_generations
                 )
+                layout["progress"].update(progress)
 
-                # Create new population
-                new_population = np.zeros_like(self.population)
+                for generation in range(self.num_generations):
+                    # Track fitness statistics
+                    current_best_fitness = np.max(self.fitness_scores)
+                    current_avg_fitness = np.mean(self.fitness_scores)
+                    current_worst_fitness = np.min(self.fitness_scores)
 
-                # Elitism: preserve best individuals
-                elite_indices = np.argsort(self.fitness_scores)[-self.elite_size :]
-                new_population[: self.elite_size] = self.population[elite_indices]
+                    best_fitness_history.append(current_best_fitness)
 
-                # Generate offspring for remaining slots
-                for i in range(self.elite_size, self.population_size):
-                    parent1_idx = self._tournament_selection()
-                    parent2_idx = self._tournament_selection()
+                    # Calculate improvement
+                    improvement = ""
+                    if generation > 0:
+                        prev_best = best_fitness_history[generation - 1]
+                        if current_best_fitness > prev_best:
+                            improvement = f"+{current_best_fitness - prev_best:.6f} ⬆️"
+                        elif current_best_fitness < prev_best:
+                            improvement = f"{current_best_fitness - prev_best:.6f} ⬇️"
+                        else:
+                            improvement = "0.000000 ➡️"
 
-                    offspring = self._crossover(
-                        self.population[parent1_idx], self.population[parent2_idx]
+                    # Update results table (keep only last 15 generations for display)
+                    if len(results_table.rows) >= 15:
+                        results_table.rows.pop(0)
+
+                    results_table.add_row(
+                        str(generation + 1),
+                        f"{current_best_fitness:.6f}",
+                        f"{current_avg_fitness:.6f}",
+                        f"{current_worst_fitness:.6f}",
+                        improvement,
                     )
-                    offspring = self._mutate(offspring)
 
-                    new_population[i] = offspring
+                    # Update progress
+                    progress.update(
+                        task,
+                        advance=1,
+                        description=f"🧬 Gen {generation + 1}/{self.num_generations} | "
+                        f"Best: {current_best_fitness:.6f} | "
+                        f"Avg: {current_avg_fitness:.6f}",
+                    )
 
-                # Replace population and evaluate
-                self.population = new_population
-                self._evaluate_population()
+                    # Update live display
+                    layout["results"].update(Panel(results_table, border_style="green"))
+
+                    # Create new population
+                    new_population = np.zeros_like(self.population)
+
+                    # Elitism: preserve best individuals
+                    elite_indices = np.argsort(self.fitness_scores)[-self.elite_size :]
+                    new_population[: self.elite_size] = self.population[elite_indices]
+
+                    # Generate offspring for remaining slots
+                    for i in range(self.elite_size, self.population_size):
+                        parent1_idx = self._tournament_selection()
+                        parent2_idx = self._tournament_selection()
+
+                        offspring = self._crossover(
+                            self.population[parent1_idx], self.population[parent2_idx]
+                        )
+                        offspring = self._mutate(offspring)
+
+                        new_population[i] = offspring
+
+                    # Replace population and evaluate
+                    self.population = new_population
+                    self._evaluate_population()
 
         # Return best individual
         best_idx = np.argmax(self.fitness_scores)
@@ -400,84 +487,90 @@ class GeneticTriggerOptimizer:
 # Model Saving and Loading Utilities
 # --------------------------------------------------------------------------- #
 
+
 def save_best_trigger(
-    model_id: int, 
-    trigger: np.ndarray, 
-    fitness: float, 
-    output_dir: Path = Path("./outputs/genetic_triggers")
+    model_id: int,
+    trigger: np.ndarray,
+    fitness: float,
+    output_dir: Path = Path("./outputs/genetic_triggers"),
 ) -> None:
     """Save the best trigger found for a model.
-    
+
     Args:
         model_id: ID of the poisoned model.
         trigger: Best trigger array of shape (75, 3).
         fitness: Fitness score achieved.
         output_dir: Directory to save triggers.
-        
+
     Raises:
         OSError: If saving fails.
     """
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Save trigger as numpy array
         trigger_path = output_dir / f"model_{model_id:02d}_trigger.npy"
         np.save(trigger_path, trigger)
-        
+
         # Save metadata
         metadata = {
-            'model_id': model_id,
-            'fitness': float(fitness),
-            'trigger_shape': trigger.shape,
-            'trigger_stats': {
-                'mean': float(np.mean(trigger)),
-                'std': float(np.std(trigger)),
-                'min': float(np.min(trigger)),
-                'max': float(np.max(trigger))
-            }
+            "model_id": model_id,
+            "fitness": float(fitness),
+            "trigger_shape": trigger.shape,
+            "trigger_stats": {
+                "mean": float(np.mean(trigger)),
+                "std": float(np.std(trigger)),
+                "min": float(np.min(trigger)),
+                "max": float(np.max(trigger)),
+            },
         }
-        
+
         import json
+
         metadata_path = output_dir / f"model_{model_id:02d}_metadata.json"
-        with metadata_path.open('w') as f:
+        with metadata_path.open("w") as f:
             json.dump(metadata, f, indent=2)
-        
+
         console.print(f"[dim]   💾 Saved trigger to {trigger_path}[/dim]")
-        
+
     except Exception as exc:
-        console.print(f"[yellow]⚠️  Failed to save trigger for model {model_id}: {exc}[/yellow]")
+        console.print(
+            f"[yellow]⚠️  Failed to save trigger for model {model_id}: {exc}[/yellow]"
+        )
 
 
 def load_best_trigger(
-    model_id: int, 
-    output_dir: Path = Path("./outputs/genetic_triggers")
+    model_id: int, output_dir: Path = Path("./outputs/genetic_triggers")
 ) -> Optional[Tuple[np.ndarray, float]]:
     """Load a previously saved trigger for a model.
-    
+
     Args:
         model_id: ID of the poisoned model.
         output_dir: Directory containing saved triggers.
-        
+
     Returns:
         Tuple of (trigger, fitness) if found, None otherwise.
     """
     try:
         trigger_path = output_dir / f"model_{model_id:02d}_trigger.npy"
         metadata_path = output_dir / f"model_{model_id:02d}_metadata.json"
-        
+
         if not (trigger_path.exists() and metadata_path.exists()):
             return None
-        
+
         trigger = np.load(trigger_path)
-        
+
         import json
-        with metadata_path.open('r') as f:
+
+        with metadata_path.open("r") as f:
             metadata = json.load(f)
-        
-        return trigger, metadata['fitness']
-        
+
+        return trigger, metadata["fitness"]
+
     except Exception as exc:
-        console.print(f"[yellow]⚠️  Failed to load trigger for model {model_id}: {exc}[/yellow]")
+        console.print(
+            f"[yellow]⚠️  Failed to load trigger for model {model_id}: {exc}[/yellow]"
+        )
         return None
 
 
@@ -496,49 +589,76 @@ def load_models_and_data() -> Tuple[NHiTSModel, list[NHiTSModel], pd.DataFrame]:
         FileNotFoundError: If required files are missing.
         RuntimeError: If model loading fails.
     """
-    console.print("[blue]Loading models and data...[/blue]")
+    console.rule("[bold blue]Loading Models and Data[/bold blue]")
 
     try:
-        # Load clean model
-        clean_model = NHiTSModel.load("./data/clean_model/clean_model.pt")
+        # Load clean model with status
+        with console.status("[bold green]Loading clean model...", spinner="dots"):
+            clean_model = NHiTSModel.load("./data/clean_model/clean_model.pt")
+            console.print("✅ Clean model loaded successfully")
 
-        # Load poisoned models
+        # Load poisoned models with progress
         poisoned_models = [None]  # Index 0 is unused
-        for model_id in range(1, 46):
-            model_path = Path(
-                f"./data/poisoned_models/poisoned_model_{model_id}/poisoned_model.pt"
-            )
-            if not model_path.exists():
-                raise FileNotFoundError(
-                    f"Poisoned model {model_id} not found: {model_path}"
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=40),
+            TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("🦠 Loading poisoned models...", total=45)
+
+            for model_id in range(1, 46):
+                model_path = Path(
+                    f"./data/poisoned_models/poisoned_model_{model_id}/poisoned_model.pt"
                 )
+                if not model_path.exists():
+                    raise FileNotFoundError(
+                        f"Poisoned model {model_id} not found: {model_path}"
+                    )
 
-            poisoned_model = NHiTSModel.load(str(model_path))
-            poisoned_models.append(poisoned_model)
+                poisoned_model = NHiTSModel.load(str(model_path))
+                poisoned_models.append(poisoned_model)
 
-        # Load training data
-        train_data_path = Path("./data/clean_train_data.csv")
-        if not train_data_path.exists():
-            raise FileNotFoundError(f"Training data not found: {train_data_path}")
+                progress.update(task, advance=1)
 
-        train_data = pd.read_csv(train_data_path, index_col="id").astype(np.float32)
+        # Load training data with status
+        with console.status("[bold cyan]Loading training data...", spinner="dots"):
+            train_data_path = Path("./data/clean_train_data.csv")
+            if not train_data_path.exists():
+                raise FileNotFoundError(f"Training data not found: {train_data_path}")
+
+            train_data = pd.read_csv(train_data_path, index_col="id").astype(np.float32)
+            console.print("✅ Training data loaded successfully")
+
+        # Summary panel
+        summary_table = Table(show_header=False, box=None)
+        summary_table.add_column("", style="bold")
+        summary_table.add_column("", style="green")
+
+        summary_table.add_row("Clean Model", "✅ Loaded")
+        summary_table.add_row(
+            "Poisoned Models", f"✅ {len(poisoned_models) - 1} loaded"
+        )
+        summary_table.add_row("Training Samples", f"✅ {len(train_data):,} samples")
 
         console.print(
-            f"[green]Successfully loaded clean model, {len(poisoned_models) - 1} poisoned models, "
-            f"and training data with {len(train_data)} samples[/green]"
+            Panel(summary_table, title="📊 Loading Summary", border_style="green")
         )
 
         return clean_model, poisoned_models, train_data
 
     except Exception as exc:
-        console.print(f"[bold red]Error loading models/data:[/bold red] {exc}")
+        console.print(f"[bold red]💥 Error loading models/data:[/bold red] {exc}")
         raise RuntimeError("Failed to load required models and data") from exc
 
 
 def optimize_triggers_genetic(
-    model_ids: Optional[list[int]] = None, 
+    model_ids: Optional[list[int]] = None,
     output_path: str = "genetic_submission.csv",
-    save_triggers: bool = True
+    save_triggers: bool = True,
 ) -> None:
     """Run genetic algorithm optimization for all poisoned models.
 
@@ -558,113 +678,258 @@ def optimize_triggers_genetic(
         clean_model, poisoned_models, train_data = load_models_and_data()
 
         results = []
-        
+
         # Create output directory for triggers if saving
         if save_triggers:
             output_dir = Path("./outputs/genetic_triggers")
             output_dir.mkdir(parents=True, exist_ok=True)
-            console.print(f"[dim]💾 Triggers will be saved to: {output_dir}[/dim]")
 
-        console.print(
-            f"[cyan]🧬 Processing {len(model_ids)} models with genetic algorithm[/cyan]"
+        # Create main processing layout
+        main_layout = Layout()
+        main_layout.split_column(
+            Layout(name="header", size=5),
+            Layout(name="progress", size=4),
+            Layout(name="current", ratio=1),
+            Layout(name="summary", size=8),
         )
 
-        for model_id in model_ids:
-            console.print(f"\n[bold blue]🎯 Processing Model {model_id}[/bold blue]")
-            start_time = time.time()
+        # Header panel
+        header_panel = Panel(
+            Align.center(
+                f"[bold blue]🧬 Genetic Algorithm Trigger Reconstruction[/bold blue]\n"
+                f"Processing {len(model_ids)} models | "
+                f"Population: {POPULATION_SIZE} | Generations: {NUM_GENERATIONS}\n"
+                f"Device: {DEVICE} | Save triggers: {'✅' if save_triggers else '❌'}",
+                vertical="middle",
+            ),
+            title="🎯 ESA Trojan Horse Hunt",
+            border_style="blue",
+        )
 
-            try:
-                # Setup fitness evaluator
-                fitness_evaluator = TriggerFitnessEvaluator(
-                    clean_model=clean_model,
-                    poisoned_model=poisoned_models[model_id],
-                    train_data=train_data,
+        # Overall progress
+        overall_progress = Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=50),
+            TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        )
+
+        # Results table
+        results_table = Table(title="🏆 Model Processing Results", show_header=True)
+        results_table.add_column("Model ID", style="bold", width=8)
+        results_table.add_column("Status", width=12)
+        results_table.add_column("Fitness", justify="right", style="green", width=12)
+        results_table.add_column("Time", justify="right", style="cyan", width=10)
+        results_table.add_column("Result", style="dim", width=15)
+
+        with Live(main_layout, console=console, refresh_per_second=2, transient=False):
+            main_layout["header"].update(header_panel)
+
+            with overall_progress:
+                main_task = overall_progress.add_task(
+                    "🧬 Processing models...", total=len(model_ids)
                 )
+                main_layout["progress"].update(overall_progress)
 
-                # Run genetic algorithm
-                optimizer = GeneticTriggerOptimizer(fitness_evaluator)
-                best_trigger, best_fitness = optimizer.evolve()
-
-                elapsed_time = (time.time() - start_time) / 60
-
-                console.print(
-                    f"[green]✅ Model {model_id} completed in {elapsed_time:.2f} minutes[/green]"
-                )
-                console.print(f"[green]🎯 Best fitness: {best_fitness:.6f}[/green]")
-
-                # Store result
-                if best_fitness > FITNESS_THRESHOLD:
-                    results.append((model_id, best_fitness, best_trigger))
-                    console.print(
-                        f"[bold green]✓ Trigger accepted (fitness > {FITNESS_THRESHOLD})[/bold green]"
+                for idx, model_id in enumerate(model_ids):
+                    overall_progress.update(
+                        main_task,
+                        description=f"🧬 Processing model {model_id} ({idx + 1}/{len(model_ids)})",
                     )
-                    
-                    # Save best trigger
-                    if save_triggers:
-                        save_best_trigger(model_id, best_trigger, best_fitness)
-                        
-                else:
-                    console.print(
-                        f"[yellow]⚠️  Trigger rejected (fitness ≤ {FITNESS_THRESHOLD}), using zero baseline[/yellow]"
-                    )
-                    zero_trigger = np.zeros((TRIGGER_LENGTH, NUM_CHANNELS))
-                    results.append((model_id, 0.0, zero_trigger))
-                    
-                    # Still save the best attempt even if below threshold
-                    if save_triggers:
-                        save_best_trigger(model_id, best_trigger, best_fitness)
 
-            except Exception as exc:
-                console.print(
-                    f"[bold red]❌ Error processing model {model_id}:[/bold red] {exc}"
-                )
-                zero_trigger = np.zeros((TRIGGER_LENGTH, NUM_CHANNELS))
-                results.append((model_id, 0.0, zero_trigger))
+                    # Current model panel
+                    current_panel = Panel(
+                        f"[bold yellow]🎯 Currently Processing Model {model_id}[/bold yellow]\n"
+                        f"[dim]Initializing genetic algorithm...[/dim]",
+                        title=f"Model {model_id}",
+                        border_style="yellow",
+                    )
+                    main_layout["current"].update(current_panel)
+
+                    start_time = time.time()
+
+                    try:
+                        # Update current status
+                        current_panel = Panel(
+                            f"[bold yellow]🎯 Processing Model {model_id}[/bold yellow]\n"
+                            f"[cyan]🔧 Setting up fitness evaluator...[/cyan]",
+                            title=f"Model {model_id}",
+                            border_style="yellow",
+                        )
+                        main_layout["current"].update(current_panel)
+
+                        # Setup fitness evaluator
+                        fitness_evaluator = TriggerFitnessEvaluator(
+                            clean_model=clean_model,
+                            poisoned_model=poisoned_models[model_id],
+                            train_data=train_data,
+                        )
+
+                        # Update status
+                        current_panel = Panel(
+                            f"[bold yellow]🎯 Processing Model {model_id}[/bold yellow]\n"
+                            f"[green]🧬 Running genetic algorithm evolution...[/green]",
+                            title=f"Model {model_id}",
+                            border_style="yellow",
+                        )
+                        main_layout["current"].update(current_panel)
+
+                        # Run genetic algorithm
+                        optimizer = GeneticTriggerOptimizer(fitness_evaluator)
+                        best_trigger, best_fitness = optimizer.evolve()
+
+                        elapsed_time = (time.time() - start_time) / 60
+                        elapsed_str = f"{elapsed_time:.1f}m"
+
+                        # Determine result status
+                        if best_fitness > FITNESS_THRESHOLD:
+                            status = "[green]✅ Success[/green]"
+                            result_text = "Accepted"
+                            results.append((model_id, best_fitness, best_trigger))
+
+                            # Save best trigger
+                            if save_triggers:
+                                save_best_trigger(model_id, best_trigger, best_fitness)
+                        else:
+                            status = "[yellow]⚠️  Below threshold[/yellow]"
+                            result_text = "Zero baseline"
+                            zero_trigger = np.zeros((TRIGGER_LENGTH, NUM_CHANNELS))
+                            results.append((model_id, 0.0, zero_trigger))
+
+                            # Still save the best attempt
+                            if save_triggers:
+                                save_best_trigger(model_id, best_trigger, best_fitness)
+
+                        # Add to results table
+                        results_table.add_row(
+                            str(model_id),
+                            status,
+                            f"{best_fitness:.6f}",
+                            elapsed_str,
+                            result_text,
+                        )
+
+                        # Update current status to completed
+                        current_panel = Panel(
+                            f"[bold green]✅ Model {model_id} Completed[/bold green]\n"
+                            f"[green]Fitness: {best_fitness:.6f} | Time: {elapsed_str}[/green]",
+                            title=f"Model {model_id}",
+                            border_style="green",
+                        )
+                        main_layout["current"].update(current_panel)
+
+                    except Exception as exc:
+                        elapsed_time = (time.time() - start_time) / 60
+                        elapsed_str = f"{elapsed_time:.1f}m"
+
+                        console.print(
+                            f"[bold red]❌ Error processing model {model_id}:[/bold red] {exc}"
+                        )
+                        zero_trigger = np.zeros((TRIGGER_LENGTH, NUM_CHANNELS))
+                        results.append((model_id, 0.0, zero_trigger))
+
+                        # Add error to results table
+                        results_table.add_row(
+                            str(model_id),
+                            "[red]❌ Error[/red]",
+                            "0.000000",
+                            elapsed_str,
+                            "Failed",
+                        )
+
+                        # Update current status to error
+                        current_panel = Panel(
+                            f"[bold red]❌ Model {model_id} Failed[/bold red]\n"
+                            f"[red]Error: {str(exc)[:50]}...[/red]",
+                            title=f"Model {model_id}",
+                            border_style="red",
+                        )
+                        main_layout["current"].update(current_panel)
+
+                    # Update summary
+                    main_layout["summary"].update(
+                        Panel(results_table, border_style="blue")
+                    )
+                    overall_progress.update(main_task, advance=1)
 
         # Create submission DataFrame
-        console.print(f"\n[blue]📄 Creating submission file: {output_path}[/blue]")
+        console.rule("[bold blue]Creating Submission File[/bold blue]")
 
-        submission_data = []
-        for model_id, fitness, trigger in results:
-            row = {"model_id": model_id}
+        with console.status(
+            f"[bold cyan]📄 Creating submission file: {output_path}...", spinner="dots"
+        ):
+            submission_data = []
+            for model_id, fitness, trigger in results:
+                row = {"model_id": model_id}
 
-            # Flatten trigger to match submission format
-            trigger_flat = trigger.T.ravel()  # Shape: (225,)
+                # Flatten trigger to match submission format
+                trigger_flat = trigger.T.ravel()  # Shape: (225,)
 
-            for ch_idx, ch_name in enumerate(CHANNEL_NAMES):
-                ch_num = int(ch_name.split("_")[1])
-                for t in range(1, TRIGGER_LENGTH + 1):
-                    col_name = f"channel_{ch_num}_{t}"
-                    flat_idx = ch_idx * TRIGGER_LENGTH + (t - 1)
-                    row[col_name] = trigger_flat[flat_idx]
+                for ch_idx, ch_name in enumerate(CHANNEL_NAMES):
+                    ch_num = int(ch_name.split("_")[1])
+                    for t in range(1, TRIGGER_LENGTH + 1):
+                        col_name = f"channel_{ch_num}_{t}"
+                        flat_idx = ch_idx * TRIGGER_LENGTH + (t - 1)
+                        row[col_name] = trigger_flat[flat_idx]
 
-            submission_data.append(row)
+                submission_data.append(row)
 
-        submission_df = pd.DataFrame(submission_data)
-        submission_df.set_index("model_id", inplace=True)
-        submission_df.to_csv(output_path)
+            submission_df = pd.DataFrame(submission_data)
+            submission_df.set_index("model_id", inplace=True)
+            submission_df.to_csv(output_path)
 
-        console.print(f"[bold green]✅ Submission saved to {output_path}[/bold green]")
-
-        # Create and display summary table
+        # Final summary with enhanced stats
         successful_models = sum(
             1 for _, fitness, _ in results if fitness > FITNESS_THRESHOLD
         )
-        
-        from rich.table import Table
-        
-        summary_table = Table(title="🧬 Genetic Algorithm Results Summary")
-        summary_table.add_column("Metric", style="bold")
-        summary_table.add_column("Value", style="green")
-        
-        summary_table.add_row("Models Processed", str(len(results)))
-        summary_table.add_row("Successful Triggers", str(successful_models))
-        summary_table.add_row("Success Rate", f"{100 * successful_models / len(results):.1f}%")
-        summary_table.add_row("Output File", output_path)
-        if save_triggers:
-            summary_table.add_row("Triggers Saved", "✅ Yes")
-        
-        console.print(summary_table)
+
+        final_summary = Table(
+            title="🎉 Final Results Summary", show_header=True, box="rounded"
+        )
+        final_summary.add_column("Metric", style="bold blue")
+        final_summary.add_column("Value", style="green")
+        final_summary.add_column("Details", style="dim")
+
+        final_summary.add_row(
+            "Models Processed",
+            str(len(results)),
+            f"IDs: {min(model_ids)}-{max(model_ids)}",
+        )
+        final_summary.add_row(
+            "Successful Triggers",
+            str(successful_models),
+            f"Above threshold ({FITNESS_THRESHOLD})",
+        )
+        final_summary.add_row(
+            "Success Rate",
+            f"{100 * successful_models / len(results):.1f}%",
+            "Fitness > threshold",
+        )
+        final_summary.add_row("Output File", output_path, "Submission CSV")
+        final_summary.add_row(
+            "Triggers Saved",
+            "✅ Yes" if save_triggers else "❌ No",
+            "./outputs/genetic_triggers/",
+        )
+
+        # Add best performance stats
+        if results:
+            best_fitness = max(fitness for _, fitness, _ in results)
+            avg_fitness = sum(fitness for _, fitness, _ in results) / len(results)
+            final_summary.add_row(
+                "Best Fitness", f"{best_fitness:.6f}", "Highest achieved"
+            )
+            final_summary.add_row(
+                "Average Fitness", f"{avg_fitness:.6f}", "Across all models"
+            )
+
+        console.print(Panel(final_summary, border_style="green"))
+        console.print(
+            "[bold green]🎉 Genetic algorithm optimization completed successfully![/bold green]"
+        )
 
     except Exception as exc:
         console.print(
@@ -683,6 +948,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Genetic Algorithm for Trojan Trigger Reconstruction",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                              # Process all models with default settings
+  %(prog)s --models 1 2 3               # Process only models 1, 2, and 3
+  %(prog)s --population-size 100        # Use larger population
+  %(prog)s --generations 200            # Run for more generations
+  %(prog)s --no-save-triggers           # Don't save individual triggers
+        """,
     )
 
     parser.add_argument(
@@ -712,7 +985,7 @@ if __name__ == "__main__":
         default=NUM_GENERATIONS,
         help=f"Number of generations (default: {NUM_GENERATIONS})",
     )
-    
+
     parser.add_argument(
         "--no-save-triggers",
         action="store_true",
@@ -728,13 +1001,28 @@ if __name__ == "__main__":
     if args.generations != NUM_GENERATIONS:
         globals()["NUM_GENERATIONS"] = args.generations
 
-    console.print("[bold blue]🧬 Genetic Algorithm Trigger Reconstruction[/bold blue]")
-    console.print(f"[dim]Population size: {POPULATION_SIZE}[/dim]")
-    console.print(f"[dim]Generations: {NUM_GENERATIONS}[/dim]")
-    console.print(f"[dim]Device: {DEVICE}[/dim]")
+    # Welcome banner
+    console.rule(
+        "[bold blue]🧬 Genetic Algorithm Trigger Reconstruction[/bold blue]",
+        style="blue",
+    )
+
+    # Configuration panel
+    config_table = Table(show_header=False, box="rounded")
+    config_table.add_column("Setting", style="bold cyan")
+    config_table.add_column("Value", style="green")
+
+    config_table.add_row("Population Size", str(POPULATION_SIZE))
+    config_table.add_row("Generations", str(NUM_GENERATIONS))
+    config_table.add_row("Device", DEVICE)
+    config_table.add_row("Fourier Harmonics", str(FOURIER_K))
+    config_table.add_row("Mutation Rate", f"{MUTATION_RATE:.1%}")
+    config_table.add_row("Elite Size", str(ELITE_SIZE))
+
+    console.print(Panel(config_table, title="⚙️  Configuration", border_style="cyan"))
 
     optimize_triggers_genetic(
         model_ids=args.models,
         output_path=args.output,
-        save_triggers=not args.no_save_triggers
+        save_triggers=not args.no_save_triggers,
     )
