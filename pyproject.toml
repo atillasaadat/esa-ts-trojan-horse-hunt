@@ -21,6 +21,7 @@ dependencies = [
     "tqdm>=4.65.0",
     "pathlib2>=2.3.0",
     "kaggle>=1.7.4.5",
+    "torch-optimizer>=0.3.0",
 ]
 
 [project.scripts]

@@ -197,3 +197,4 @@ cython_debug/
 data/*
 trigger_plots/*
 *.csv
+loss_charts/*
