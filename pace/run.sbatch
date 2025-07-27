@@ -14,4 +14,4 @@ module load cuda
 uv sync
 source .venv/bin/activate
 
-srun python thh-greedy-goose-p.py                      # Example Process
+srun python fourierdl.py                      # Example Process
